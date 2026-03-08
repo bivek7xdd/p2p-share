@@ -1,0 +1,43 @@
+name: Release App
+
+# This tells the action to ONLY run when you push a new tag starting with "v"
+on:
+  push:
+    tags:
+      - 'v*'
+
+# These are the permissions the robot needs to create the GitHub Release page
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Required for GoReleaser to see the git tags
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: Install Snapcraft
+        run: sudo snap install snapcraft --classic
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v5
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release --clean
+        env:
+          # This passes the standard GitHub token for creating the release page
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # This passes your custom token so it can push to your homebrew-tap repo
+          TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+          # This logs into the Snap store
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}

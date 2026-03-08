@@ -3,10 +3,12 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/bivek7xdd/p2p-share/internal/transfer"
 	"github.com/charmbracelet/bubbles/filepicker"
-	"github.com/charmbracelet/bubbles/progress" // ✅ Added progress bar
+	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -16,19 +18,24 @@ import (
 const (
 	StateMenu = iota
 	StateSend
+	StateSendManual
 	StateReceive
 	StateConnecting
 	StateWaitingForReceiver
 	StateReceiverConnecting
-	StateTransferring // ✅ New state for when the file is actively downloading/uploading!
+	StateTransferring
+	StateSuccess
 	StateError
 )
 
-type pinMsg string
+type pinMsg struct {
+	pin string
+	ws  *websocket.Conn
+}
 type errMsg error
-
-// ✅ This is the message WebRTC will send to update the bar (from 0.0 to 1.0)
 type progressMsg float64
+type connectedMsg struct{}
+type transferSuccessMsg struct{}
 
 type model struct {
 	state   int
@@ -36,14 +43,16 @@ type model struct {
 	choices []string
 
 	// UI Components
-	fp       filepicker.Model
-	ti       textinput.Model
-	progress progress.Model // ✅ Our new progress bar!
+	fp        filepicker.Model
+	ti        textinput.Model
+	pathInput textinput.Model
+	progress  progress.Model
 
 	// App Data
 	selectedFile string
 	pinCode      string
 	err          error
+	isSender     bool
 }
 
 func initialModel() model {
@@ -57,16 +66,21 @@ func initialModel() model {
 	ti.CharLimit = 4
 	ti.Width = 20
 
-	// ✅ Initialize the progress bar with a beautiful color gradient
+	pathTi := textinput.New()
+	pathTi.Placeholder = "/path/to/your/file.txt"
+	pathTi.CharLimit = 0
+	pathTi.Width = 50
+
 	prog := progress.New(progress.WithDefaultGradient())
 
 	return model{
-		state:    StateMenu,
-		cursor:   0,
-		choices:  []string{"📤 Send a File", "📥 Receive a File", "❌ Exit"},
-		fp:       fp,
-		ti:       ti,
-		progress: prog,
+		state:     StateMenu,
+		cursor:    0,
+		choices:   []string{"📤 Send a File (File Picker)", "📂 Send a File (Manual Path)", "📥 Receive a File", "❌ Exit"},
+		fp:        fp,
+		ti:        ti,
+		pathInput: pathTi,
+		progress:  prog,
 	}
 }
 
@@ -79,21 +93,36 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
-
-	// ✅ Listen for progress updates from our future WebRTC logic!
 	case progressMsg:
 		cmd = m.progress.SetPercent(float64(msg))
 		return m, cmd
 
-	// ✅ The progress bar needs frame messages to animate smoothly
 	case progress.FrameMsg:
 		progressModel, cmd := m.progress.Update(msg)
 		m.progress = progressModel.(progress.Model)
 		return m, cmd
 
+	case connectedMsg:
+		m.state = StateTransferring
+		return m, nil
+
+	case transferSuccessMsg:
+		m.state = StateSuccess
+		return m, nil
+
 	case pinMsg:
-		m.pinCode = string(msg)
+		m.isSender = true
+		m.pinCode = msg.pin
 		m.state = StateWaitingForReceiver
+
+		cb := transfer.Callbacks{
+			OnConnected: func() { globalProgram.Send(connectedMsg{}) },
+			OnProgress:  func(p float64) { globalProgram.Send(progressMsg(p)) },
+			OnSuccess:   func() { globalProgram.Send(transferSuccessMsg{}) },
+			OnError:     func(e error) { globalProgram.Send(errMsg(e)) },
+		}
+
+		go transfer.StartSender(msg.ws, m.selectedFile, cb)
 		return m, nil
 
 	case errMsg:
@@ -106,7 +135,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.fp.Height < 5 {
 			m.fp.Height = 5
 		}
-		// Adjust progress bar width dynamically
 		m.progress.Width = msg.Width - 10
 		if m.progress.Width > 60 {
 			m.progress.Width = 60
@@ -133,6 +161,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.cursor == 0 {
 					m.state = StateSend
 				} else if m.cursor == 1 {
+					m.state = StateSendManual
+					m.pathInput.Focus()
+					return m, textinput.Blink
+				} else if m.cursor == 2 {
 					m.state = StateReceive
 					m.ti.Focus()
 					return m, textinput.Blink
@@ -150,10 +182,51 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			if msg.String() == "enter" {
-				m.pinCode = m.ti.Value()
+				m.isSender = false
+				m.pinCode = strings.TrimSpace(m.ti.Value())
+				if m.pinCode == "" {
+					return m, nil
+				}
 				m.state = StateReceiverConnecting
-				// (WebRTC connection will be triggered here)
+
+				cb := transfer.Callbacks{
+					OnConnected: func() { globalProgram.Send(connectedMsg{}) },
+					OnProgress:  func(p float64) { globalProgram.Send(progressMsg(p)) },
+					OnSuccess:   func() { globalProgram.Send(transferSuccessMsg{}) },
+					OnError:     func(e error) { globalProgram.Send(errMsg(e)) },
+				}
+
+				go transfer.StartReceiver(m.pinCode, cb)
 				return m, nil
+			}
+		}
+
+		if m.state == StateSendManual {
+			if msg.String() == "esc" {
+				m.state = StateMenu
+				m.pathInput.Blur()
+				return m, nil
+			}
+			if msg.String() == "enter" {
+				path := strings.TrimSpace(m.pathInput.Value())
+				if path != "" {
+					fInfo, err := os.Stat(path)
+					if err == nil && !fInfo.IsDir() {
+						m.selectedFile = path
+						m.state = StateConnecting
+						return m, connectAndGetPIN()
+					} else {
+						m.pathInput.SetValue("")
+						m.pathInput.Placeholder = "Invalid path or directory! Try again."
+					}
+				}
+				return m, nil
+			}
+		}
+
+		if m.state == StateSuccess || m.state == StateError {
+			if msg.String() == "enter" || msg.String() == "esc" || msg.String() == "q" {
+				return m, tea.Quit
 			}
 		}
 	}
@@ -163,10 +236,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, cmd)
 
 		if didSelect, path := m.fp.DidSelectFile(msg); didSelect {
+			fInfo, err := os.Stat(path)
+			if err != nil || fInfo.IsDir() {
+				// Don't send directories!
+				return m, nil
+			}
 			m.selectedFile = path
 			m.state = StateConnecting
 			cmds = append(cmds, connectAndGetPIN())
 		}
+	} else if m.state == StateSendManual {
+		m.pathInput, cmd = m.pathInput.Update(msg)
+		cmds = append(cmds, cmd)
 	} else if m.state == StateReceive {
 		m.ti, cmd = m.ti.Update(msg)
 		cmds = append(cmds, cmd)
@@ -181,8 +262,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FAFAFA")).Background(lipgloss.Color("#7D56F4")).Padding(0, 1)
-	s := titleStyle.Render(" P2P File Share ") + "\n\n"
+	logo := `
+ ___  __  ___    ___ _                   
+| _ \_  )| _ \  / __| |_  __ _ _ _ ___   
+|  _// / |  _/  \__ \ ' \/ _` + "`" + ` | '_/ -_)  
+|_| /___||_|    |___/_||_\__,_|_| \___|  
+`
+	titleStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#04B575")).
+		Bold(true).
+		MarginBottom(1)
+
+	s := titleStyle.Render(strings.TrimPrefix(logo, "\n"))
 
 	if m.state == StateMenu {
 		s += "What would you like to do?\n\n"
@@ -199,8 +290,13 @@ func (m model) View() string {
 		s += "Select a file to send (Esc to go back):\n\n"
 		s += m.fp.View()
 
+	} else if m.state == StateSendManual {
+		s += "Enter the full path to the file you want to send:\n\n"
+		s += m.pathInput.View() + "\n\n"
+		s += lipgloss.NewStyle().Foreground(lipgloss.Color("#666666")).Render("(Press Enter to confirm, Esc to go back)")
+
 	} else if m.state == StateConnecting {
-		s += fmt.Sprintf("File Selected: %s\n\n", lipgloss.NewStyle().Foreground(lipgloss.Color("#04B575")).Render(m.selectedFile))
+		s += fmt.Sprintf("File Selected: %s\n\n", lipgloss.NewStyle().Foreground(lipgloss.Color("#04B575")).Render(filepath.Base(m.selectedFile)))
 		s += "⏳ Generating PIN code..."
 
 	} else if m.state == StateWaitingForReceiver {
@@ -219,19 +315,31 @@ func (m model) View() string {
 		s += "⏳ Negotiating WebRTC connection..."
 
 	} else if m.state == StateTransferring {
-		// ✅ Render the progress bar!
-		s += fmt.Sprintf("🚀 Transferring File...\n\n")
+		if m.isSender {
+			s += "🚀 Uploading File...\n\n"
+		} else {
+			s += "🚀 Downloading File...\n\n"
+		}
 		s += m.progress.View() + "\n\n"
 
-		// We will update this text based on whether it is the sender or receiver later
 		s += "Please keep this window open."
+
+	} else if m.state == StateSuccess {
+		s += lipgloss.NewStyle().Foreground(lipgloss.Color("#04B575")).Render("✅ Transfer Complete!\n\n")
+		if m.isSender {
+			s += "The file was successfully sent."
+		} else {
+			s += "The file was safely downloaded to this folder."
+		}
+		s += "\n\nPress 'Enter' or 'q' to quit."
 
 	} else if m.state == StateError {
 		s += lipgloss.NewStyle().Foreground(lipgloss.Color("#FF0000")).Render("❌ Error:\n")
 		s += fmt.Sprintf("%v", m.err)
+		s += "\n\nPress 'Enter' or 'q' to quit."
 	}
 
-	if m.state != StateMenu && m.state != StateReceive {
+	if m.state != StateMenu && m.state != StateReceive && m.state != StateSuccess && m.state != StateError && m.state != StateSendManual {
 		s += lipgloss.NewStyle().Foreground(lipgloss.Color("#666666")).Render("\n\nPress 'ctrl+c' to quit.")
 	}
 
@@ -256,7 +364,7 @@ func connectAndGetPIN() tea.Cmd {
 		response := string(msg)
 		if strings.HasPrefix(response, "PIN:") {
 			pin := strings.Split(response, ":")[1]
-			return pinMsg(pin)
+			return pinMsg{pin: pin, ws: ws}
 		}
 
 		ws.Close()
@@ -264,10 +372,12 @@ func connectAndGetPIN() tea.Cmd {
 	}
 }
 
+var globalProgram *tea.Program
+
 func main() {
-	p := tea.NewProgram(initialModel(), tea.WithAltScreen())
-	if _, err := p.Run(); err != nil {
-		fmt.Printf("Alas, there's been an error: %v", err)
+	globalProgram = tea.NewProgram(initialModel(), tea.WithAltScreen())
+	if _, err := globalProgram.Run(); err != nil {
+		fmt.Printf("Alas, there's been an error: %v\n", err)
 		os.Exit(1)
 	}
 }

@@ -1,0 +1,60 @@
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+# This tells GoReleaser to build for Mac, Windows, and Linux
+builds:
+  - env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - windows
+      - darwin
+    main: ./main.go 
+
+# This zips up the raw binaries
+archives:
+  - format: tar.gz
+    format_overrides:
+      - goos: windows
+        format: zip
+
+# --- PACKAGE MANAGERS ---
+
+# 1. Homebrew (macOS / Linux)
+brews:
+  - repository:
+      owner: bivek7xdd
+      name: homebrew-tap
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+    description: "A beautiful TUI for P2P file sharing"
+    homepage: "https://github.com/bivek7xdd/p2p-share"
+    
+
+# 2. APT & RPM (Debian, Ubuntu, Fedora, CentOS)
+nfpms:
+  - vendor: "Bivek7xdd"
+    homepage: "https://github.com/bivek7xdd/p2p-share"
+    maintainer: "Bivek7xdd <bivekshrestha238@gmail.com>"
+    description: "Secure, peer-to-peer file sharing right from your terminal."
+    license: "MIT"
+    formats:
+      - deb
+      - rpm
+
+# 3. Snap Store (Ubuntu, Manjaro, etc.)
+snaps:
+  - name: p2p-share
+    summary: A beautiful TUI for P2P file sharing.
+    description: Secure, peer-to-peer file sharing right from your terminal using WebRTC.
+    publish: true
+    confinement: strict
+    apps:
+      p2p-share:
+        command: p2p-share
+        plugs:
+          - network
+          - network-bind
+          - home
