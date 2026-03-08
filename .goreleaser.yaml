@@ -45,7 +45,7 @@ nfpms:
       - rpm
 
 # 3. Snap Store (Ubuntu, Manjaro, etc.)
-snaps:
+snapcrafts:
   - name: p2p-share
     summary: A beautiful TUI for P2P file sharing.
     description: Secure, peer-to-peer file sharing right from your terminal using WebRTC.
