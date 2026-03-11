@@ -4,7 +4,7 @@ name: Release App
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
 
 # These are the permissions the robot needs to create the GitHub Release page
 permissions:
@@ -32,7 +32,7 @@ jobs:
         uses: goreleaser/goreleaser-action@v5
         with:
           distribution: goreleaser
-          version: '~> v2'
+          version: "~> v2"
           args: release --clean
         env:
           # This passes the standard GitHub token for creating the release page
@@ -41,3 +41,4 @@ jobs:
           TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
           # This logs into the Snap store
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+          SIGNALING_SERVER_URL: ${{ secrets.SIGNALING_SERVER_URL }}
