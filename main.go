@@ -13,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/gorilla/websocket"
+	"github.com/joho/godotenv"
 )
 
 const (
@@ -263,10 +264,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) View() string {
 	logo := `
- ___  __  ___    ___ _                   
-| _ \_  )| _ \  / __| |_  __ _ _ _ ___   
-|  _// / |  _/  \__ \ ' \/ _` + "`" + ` | '_/ -_)  
-|_| /___||_|    |___/_||_\__,_|_| \___|  
+ ___  __  ___    ___ _
+| _ \_  )| _ \  / __| |_  __ _ _ _ ___
+|  _// / |  _/  \__ \ ' \/ _` + "`" + ` | '_/ -_)
+|_| /___||_|    |___/_||_\__,_|_| \___|
 `
 	titleStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#04B575")).
@@ -348,7 +349,7 @@ func (m model) View() string {
 
 func connectAndGetPIN() tea.Cmd {
 	return func() tea.Msg {
-		ws, _, err := websocket.DefaultDialer.Dial("ws://localhost:8080/ws", nil)
+		ws, _, err := websocket.DefaultDialer.Dial(os.Getenv("SIGNALING_SERVER_URL"), nil)
 		if err != nil {
 			return errMsg(err)
 		}
@@ -375,6 +376,7 @@ func connectAndGetPIN() tea.Cmd {
 var globalProgram *tea.Program
 
 func main() {
+	godotenv.Load()
 	globalProgram = tea.NewProgram(initialModel(), tea.WithAltScreen())
 	if _, err := globalProgram.Run(); err != nil {
 		fmt.Printf("Alas, there's been an error: %v\n", err)

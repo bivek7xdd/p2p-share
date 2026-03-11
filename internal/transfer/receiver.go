@@ -11,7 +11,7 @@ import (
 )
 
 func StartReceiver(pin string, cb Callbacks) {
-	ws, _, err := websocket.DefaultDialer.Dial("ws://localhost:8080/ws", nil)
+	ws, _, err := websocket.DefaultDialer.Dial(os.Getenv("SIGNALING_SERVER_URL"), nil)
 	if err != nil {
 		if cb.OnError != nil {
 			cb.OnError(err)
