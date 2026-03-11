@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/rand"
 	"net/http"
+	"os"
 	"sync"
 
 	"github.com/gorilla/websocket"
@@ -25,9 +26,23 @@ type Room struct {
 }
 
 func main() {
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintln(w, "p2p-share signaling server is running")
+	})
+	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintln(w, "ok")
+	})
 	http.HandleFunc("/ws", handleConnections)
-	fmt.Println("Server started on :8080")
-	http.ListenAndServe(":8080", nil)
+
+	fmt.Printf("Server started on :%s\n", port)
+	http.ListenAndServe(":"+port, nil)
 }
 
 func handleConnections(w http.ResponseWriter, r *http.Request) {
