@@ -8,11 +8,13 @@ before:
 builds:
   - env:
       - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X main.signalingServerURL={{ .Env.SIGNALING_SERVER_URL }}
     goos:
       - linux
       - windows
       - darwin
-    main: ./main.go 
+    main: ./main.go
 
 # This zips up the raw binaries
 archives:
@@ -31,7 +33,6 @@ brews:
       token: "{{ .Env.TAP_GITHUB_TOKEN }}"
     description: "A beautiful TUI for P2P file sharing"
     homepage: "https://github.com/bivek7xdd/p2p-share"
-    
 
 # 2. APT & RPM (Debian, Ubuntu, Fedora, CentOS)
 nfpms:

@@ -16,6 +16,8 @@ import (
 	"github.com/joho/godotenv"
 )
 
+var signalingServerURL string // injected at build time via -ldflags
+
 const (
 	StateMenu = iota
 	StateSend
@@ -197,7 +199,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					OnError:     func(e error) { globalProgram.Send(errMsg(e)) },
 				}
 
-				go transfer.StartReceiver(m.pinCode, cb)
+				go transfer.StartReceiver(m.pinCode, signalingServerURL, cb)
 				return m, nil
 			}
 		}
@@ -349,7 +351,7 @@ func (m model) View() string {
 
 func connectAndGetPIN() tea.Cmd {
 	return func() tea.Msg {
-		ws, _, err := websocket.DefaultDialer.Dial(os.Getenv("SIGNALING_SERVER_URL"), nil)
+		ws, _, err := websocket.DefaultDialer.Dial(signalingServerURL, nil)
 		if err != nil {
 			return errMsg(err)
 		}
@@ -377,6 +379,9 @@ var globalProgram *tea.Program
 
 func main() {
 	godotenv.Load()
+	if signalingServerURL == "" {
+		signalingServerURL = os.Getenv("SIGNALING_SERVER_URL")
+	}
 	globalProgram = tea.NewProgram(initialModel(), tea.WithAltScreen())
 	if _, err := globalProgram.Run(); err != nil {
 		fmt.Printf("Alas, there's been an error: %v\n", err)

@@ -10,8 +10,8 @@ import (
 	"github.com/pion/webrtc/v3"
 )
 
-func StartReceiver(pin string, cb Callbacks) {
-	ws, _, err := websocket.DefaultDialer.Dial(os.Getenv("SIGNALING_SERVER_URL"), nil)
+func StartReceiver(pin string, serverURL string, cb Callbacks) {
+	ws, _, err := websocket.DefaultDialer.Dial(serverURL, nil)
 	if err != nil {
 		if cb.OnError != nil {
 			cb.OnError(err)
